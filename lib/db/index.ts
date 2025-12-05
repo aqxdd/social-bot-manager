@@ -3,8 +3,6 @@
  * =============================================================================
  * 这个文件负责创建和管理 Prisma 数据库连接
  * 支持本地 Docker PostgreSQL 和 Vercel 云数据库
- * 
- * 注意：Prisma 7 使用新的配置方式，连接 URL 在 prisma.config.ts 中配置
  */
 
 import { PrismaClient } from '../../generated/prisma/client'
@@ -19,18 +17,21 @@ declare global {
 
 /**
  * 创建 Prisma 客户端实例
- * Prisma 7 使用适配器方式连接数据库
  */
 function createPrismaClient(): PrismaClient {
-  // 创建 PostgreSQL 连接池
   const connectionString = process.env.DATABASE_URL
   
   if (!connectionString) {
     throw new Error('DATABASE_URL 环境变量未设置')
   }
   
+  // 创建 PostgreSQL 连接池
   const pool = new Pool({
     connectionString,
+    // Serverless 环境优化
+    max: 1, // 限制最大连接数
+    idleTimeoutMillis: 20000,
+    connectionTimeoutMillis: 10000,
   })
   
   // 使用 Prisma PostgreSQL 适配器
