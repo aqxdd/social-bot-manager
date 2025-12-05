@@ -1,0 +1,423 @@
+// =============================================================================
+// Prisma Schema - 社交媒体机器人管理系统
+// =============================================================================
+// 这个文件定义了整个系统的数据模型
+// 包括：用户认证、设备管理、社交账号、内容管理、帖子发布等
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// =============================================================================
+// 认证相关模型 - better-auth 所需的表
+// =============================================================================
+
+/// 系统用户表 - 存储管理后台的用户信息
+model User {
+  id            String    @id @default(cuid())
+  name          String?   // 用户显示名称
+  email         String    @unique // 登录邮箱
+  emailVerified Boolean   @default(false) // 邮箱是否已验证
+  image         String?   // 用户头像URL
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // 认证相关
+  sessions Session[]
+  accounts Account[]
+
+  // 业务关联
+  devices       Device[] // 用户管理的设备
+  socialBots    SocialBot[] // 用户的社交机器人
+  contents      Content[] // 用户创建的内容
+  posts         Post[] // 用户发布的帖子
+  apiKeys       ApiKey[] // 用户的API密钥
+
+  @@map("users")
+}
+
+/// 用户会话表 - 管理用户登录状态
+model Session {
+  id        String   @id @default(cuid())
+  expiresAt DateTime // 会话过期时间
+  token     String   @unique // 会话令牌
+  ipAddress String?  // 登录IP地址
+  userAgent String?  // 用户代理信息
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("sessions")
+}
+
+/// OAuth账号关联表 - 支持第三方登录
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String    // 第三方平台的用户ID
+  providerId            String    // 提供商标识（github, google等）
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?   // 访问令牌
+  refreshToken          String?   // 刷新令牌
+  accessTokenExpiresAt  DateTime? // 访问令牌过期时间
+  refreshTokenExpiresAt DateTime? // 刷新令牌过期时间
+  scope                 String?   // 权限范围
+  password              String?   // 密码（用于邮箱登录）
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@map("accounts")
+}
+
+/// 邮箱验证表
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String   // 验证标识（邮箱地址）
+  value      String   // 验证码/令牌
+  expiresAt  DateTime // 过期时间
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("verifications")
+}
+
+// =============================================================================
+// 设备管理模型
+// =============================================================================
+
+/// 设备状态枚举
+enum DeviceStatus {
+  ONLINE    // 在线
+  OFFLINE   // 离线
+  BUSY      // 忙碌（执行任务中）
+  ERROR     // 错误状态
+}
+
+/// 设备表 - 管理运行机器人的物理/虚拟设备
+model Device {
+  id          String       @id @default(cuid())
+  name        String       // 设备名称
+  description String?      // 设备描述
+  deviceType  String       // 设备类型（android, ios, desktop, server等）
+  status      DeviceStatus @default(OFFLINE)
+  ipAddress   String?      // 设备IP地址
+  metadata    Json?        // 设备元数据（系统版本、屏幕分辨率等）
+  lastSeenAt  DateTime?    // 最后在线时间
+  userId      String
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  // 关联
+  socialBots SocialBot[] // 设备上运行的社交机器人
+
+  @@map("devices")
+}
+
+// =============================================================================
+// 社交媒体账号/机器人模型
+// =============================================================================
+
+/// 社交平台枚举
+enum SocialPlatform {
+  TWITTER     // Twitter/X
+  INSTAGRAM   // Instagram
+  FACEBOOK    // Facebook
+  TIKTOK      // TikTok
+  LINKEDIN    // LinkedIn
+  YOUTUBE     // YouTube
+  WEIBO       // 微博
+  WECHAT      // 微信
+  XIAOHONGSHU // 小红书
+  DOUYIN      // 抖音
+  OTHER       // 其他平台
+}
+
+/// 机器人状态枚举
+enum BotStatus {
+  ACTIVE      // 活跃
+  INACTIVE    // 未激活
+  SUSPENDED   // 被封禁
+  LOGIN_REQUIRED // 需要重新登录
+}
+
+/// 社交机器人表 - 代表一个社交媒体账号
+model SocialBot {
+  id           String         @id @default(cuid())
+  name         String         // 机器人名称（内部标识）
+  platform     SocialPlatform // 社交平台
+  username     String?        // 平台用户名
+  displayName  String?        // 平台显示名称
+  avatar       String?        // 头像URL
+  status       BotStatus      @default(INACTIVE)
+  
+  // 登录凭证（加密存储）
+  credentials  Json?          // 登录凭证信息
+  cookies      Json?          // 会话Cookie
+  
+  // 设备和用户关联
+  deviceId     String?
+  device       Device?        @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  userId       String
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // 统计信息
+  followers    Int            @default(0) // 粉丝数
+  following    Int            @default(0) // 关注数
+  postsCount   Int            @default(0) // 发帖数
+  lastLoginAt  DateTime?      // 最后登录时间
+  lastPostAt   DateTime?      // 最后发帖时间
+  
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  // 关联
+  posts     Post[]     // 发布的帖子
+  hotTopics HotTopic[] // 收集的热点
+
+  @@unique([platform, username]) // 同一平台用户名唯一
+  @@map("social_bots")
+}
+
+// =============================================================================
+// 内容管理模型
+// =============================================================================
+
+/// 内容类型枚举
+enum ContentType {
+  TEXT       // 纯文本
+  IMAGE      // 图片
+  VIDEO      // 视频
+  CAROUSEL   // 轮播图
+  STORY      // 故事（临时内容）
+}
+
+/// 内容状态枚举
+enum ContentStatus {
+  DRAFT      // 草稿
+  READY      // 就绪
+  PUBLISHED  // 已发布
+  ARCHIVED   // 已归档
+}
+
+/// 内容表 - 存储待发布的内容
+model Content {
+  id          String        @id @default(cuid())
+  title       String?       // 内容标题
+  text        String?       // 文本内容
+  type        ContentType   @default(TEXT)
+  status      ContentStatus @default(DRAFT)
+  
+  // 媒体文件（JSON数组存储多个文件URL）
+  mediaUrls   Json?         // 媒体文件URL列表
+  
+  // AI生成相关
+  aiGenerated Boolean       @default(false) // 是否AI生成
+  aiPrompt    String?       // AI生成使用的提示词
+  aiModel     String?       // 使用的AI模型
+  
+  // 标签和分类
+  tags        String[]      // 标签列表
+  category    String?       // 分类
+  
+  // 关联
+  userId      String
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  // 帖子关联
+  posts       Post[]        // 使用此内容发布的帖子
+
+  @@map("contents")
+}
+
+// =============================================================================
+// 帖子发布模型
+// =============================================================================
+
+/// 帖子状态枚举
+enum PostStatus {
+  SCHEDULED   // 已排期
+  PUBLISHING  // 发布中
+  PUBLISHED   // 已发布
+  FAILED      // 发布失败
+  DELETED     // 已删除
+}
+
+/// 帖子表 - 记录实际发布到社交平台的帖子
+model Post {
+  id           String     @id @default(cuid())
+  
+  // 发布内容
+  contentId    String?    // 关联的内容（可选，也可直接填写）
+  content      Content?   @relation(fields: [contentId], references: [id], onDelete: SetNull)
+  text         String?    // 直接填写的文本（覆盖content的文本）
+  mediaUrls    Json?      // 直接填写的媒体URL
+  
+  // 发布目标
+  socialBotId  String
+  socialBot    SocialBot  @relation(fields: [socialBotId], references: [id], onDelete: Cascade)
+  
+  // 发布状态
+  status       PostStatus @default(SCHEDULED)
+  scheduledAt  DateTime?  // 计划发布时间
+  publishedAt  DateTime?  // 实际发布时间
+  
+  // 平台反馈
+  platformPostId String?  // 平台返回的帖子ID
+  platformUrl    String?  // 平台帖子链接
+  
+  // 互动统计
+  likes        Int        @default(0)
+  comments     Int        @default(0)
+  shares       Int        @default(0)
+  views        Int        @default(0)
+  
+  // 错误信息
+  errorMessage String?    // 发布失败时的错误信息
+  retryCount   Int        @default(0) // 重试次数
+  
+  // 用户关联
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@map("posts")
+}
+
+// =============================================================================
+// 热点数据收集模型
+// =============================================================================
+
+/// 热点话题表 - 存储收集的热点数据
+model HotTopic {
+  id           String         @id @default(cuid())
+  
+  // 热点信息
+  title        String         // 热点标题
+  description  String?        // 热点描述
+  url          String?        // 热点链接
+  platform     SocialPlatform // 来源平台
+  
+  // 热度指标
+  hotScore     Int            @default(0) // 热度分数
+  rank         Int?           // 排名
+  trendType    String?        // 趋势类型（上升、稳定、下降）
+  
+  // 元数据
+  metadata     Json?          // 其他元数据
+  
+  // 收集来源
+  socialBotId  String?
+  socialBot    SocialBot?     @relation(fields: [socialBotId], references: [id], onDelete: SetNull)
+  
+  collectedAt  DateTime       @default(now()) // 收集时间
+  expiresAt    DateTime?      // 过期时间
+
+  @@map("hot_topics")
+}
+
+// =============================================================================
+// API密钥管理模型
+// =============================================================================
+
+/// API密钥表 - 用于对外提供API服务
+model ApiKey {
+  id          String    @id @default(cuid())
+  name        String    // 密钥名称
+  key         String    @unique // API密钥（哈希存储）
+  prefix      String    // 密钥前缀（用于显示）
+  
+  // 权限控制
+  scopes      String[]  // 权限范围列表
+  rateLimit   Int       @default(1000) // 每小时请求限制
+  
+  // 状态
+  isActive    Boolean   @default(true)
+  lastUsedAt  DateTime? // 最后使用时间
+  expiresAt   DateTime? // 过期时间
+  
+  // 用户关联
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("api_keys")
+}
+
+// =============================================================================
+// 任务队列模型（可选，用于追踪BullMQ任务）
+// =============================================================================
+
+/// 任务类型枚举
+enum TaskType {
+  POST_PUBLISH    // 发布帖子
+  DATA_COLLECT    // 数据收集
+  CONTENT_GENERATE // 内容生成
+  BOT_LOGIN       // 机器人登录
+  BOT_SYNC        // 同步机器人数据
+}
+
+/// 任务状态枚举
+enum TaskStatus {
+  PENDING    // 等待中
+  RUNNING    // 执行中
+  COMPLETED  // 已完成
+  FAILED     // 失败
+  CANCELLED  // 已取消
+}
+
+/// 任务记录表 - 记录异步任务的执行情况
+model TaskRecord {
+  id          String     @id @default(cuid())
+  type        TaskType   // 任务类型
+  status      TaskStatus @default(PENDING)
+  
+  // 任务数据
+  payload     Json?      // 任务参数
+  result      Json?      // 执行结果
+  error       String?    // 错误信息
+  
+  // 执行信息
+  queueJobId  String?    // BullMQ任务ID
+  progress    Int        @default(0) // 进度(0-100)
+  startedAt   DateTime?  // 开始执行时间
+  completedAt DateTime?  // 完成时间
+  
+  // 关联用户
+  userId      String?
+  
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@map("task_records")
+}
+
+// =============================================================================
+// 系统配置模型
+// =============================================================================
+
+/// 系统配置表 - 存储全局配置
+model SystemConfig {
+  id        String   @id @default(cuid())
+  key       String   @unique // 配置键
+  value     Json     // 配置值（JSON格式）
+  category  String?  // 配置分类
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("system_configs")
+}
